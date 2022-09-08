@@ -1,0 +1,136 @@
+<?php
+
+class Season {
+
+    private $seasonNumber, $videos;
+
+    public function __construct($seasonNumber, $videos) {
+        $this->seasonNumber = $seasonNumber;
+        $this->videos = $videos;
+    }
+
+    public function getSeasonNumber() {
+        return $this->seasonNumber;
+    }
+
+    public function getVideos() {
+        return $this->videos;
+    }
+
+}
+?>
+Season Provider:
+<?php
+class SeasonProvider {
+    private $con, $username;
+
+    public function __construct($con, $username) {
+        $this->con = $con;
+        $this->username = $username;
+    }
+
+    public function create($entity) {
+        $seasons = $entity->getSeasons();
+
+        if(sizeof($seasons) == 0) {
+            return;
+        }
+
+        $seasonsHtml = "";
+        foreach($seasons as $season) {
+            $seasonNumber = $season->getSeasonNumber();
+
+            $videosHtml = "";
+            foreach($season->getVideos() as $video) {
+                $videosHtml .= $this->createVideoSquare($video);
+            }
+
+
+            $seasonsHtml .= "<div class='season'>
+                                    <h3>Season $seasonNumber</h3>
+                                    <div class='videos'>
+                                        $videosHtml
+                                    </div>
+                                </div>";
+        }
+
+        return $seasonsHtml;
+    }
+
+    private function createVideoSquare($video) {
+        $id = $video->getId();
+        $thumbnail = $video->getThumbnail();
+        $name = $video->getTitle();
+        $description = $video->getDescription();
+        $episodeNumber = $video->getEpisodeNumber();
+
+        return "<a href='watch.php?id=$id'>
+                    <div class='episodeContainer'>
+                        <div class='contents'>
+
+                            <img src='$thumbnail'>
+
+                            <div class='videoInfo'>
+                                <h4>$episodeNumber. $name</h4>
+                                <span>$description</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </a>";
+    }
+}
+?>
+Video:
+<?php
+class Video {
+    private $con, $sqlData, $entity;
+
+    public function __construct($con, $input) {
+        $this->con = $con;
+
+        if(is_array($input)) {
+            $this->sqlData = $input;
+        }
+        else {
+            $query = $this->con->prepare("SELECT * FROM videos WHERE id=:id");
+            $query->bindValue(":id", $input);
+            $query->execute();
+
+            $this->sqlData = $query->fetch(PDO::FETCH_ASSOC);
+        }
+
+        $this->entity = new Entity($con, $this->sqlData["entityId"]);
+    }
+
+    public function getId() {
+        return $this->sqlData["id"];
+    }
+
+    public function getTitle() {
+        return $this->sqlData["title"];
+    }
+
+    public function getDescription() {
+        return $this->sqlData["description"];
+    }
+
+    public function getFilePath() {
+        return $this->sqlData["filePath"];
+    }
+
+    public function getThumbnail() {
+        return $this->entity->getThumbnail();
+    }
+
+    public function getEpisodeNumber() {
+        return $this->sqlData["episode"];
+    }
+
+    public function incrementViews() {
+        $query = $this->con->prepare("UPDATE videos SET views=views+1 WHERE id=:id");
+        $query->bindValue(":id", $this->getId());
+        $query->execute();
+    }
+}
+?>
