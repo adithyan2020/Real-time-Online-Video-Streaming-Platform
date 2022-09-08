@@ -1,0 +1,312 @@
+<?php
+class Account {
+
+    private $con;
+    private $errorArray = array();
+
+    public function __construct($con) {
+        $this->con = $con;
+    }
+
+    public function register($fn, $ln, $un, $em, $em2, $pw, $pw2) {
+        $this->validateFirstName($fn);
+        $this->validateLastName($ln);
+        $this->validateUsername($un);
+        $this->validateEmails($em, $em2);
+        $this->validatePasswords($pw, $pw2);
+
+        if(empty($this->errorArray)) {
+            return $this->insertUserDetails($fn, $ln, $un, $em, $pw);
+        }
+
+        return false;
+    }
+
+    public function login($un, $pw) {
+        $pw = hash("sha512", $pw);
+
+        $query = $this->con->prepare("SELECT * FROM users WHERE username=:un AND password=:pw");
+        $query->bindValue(":un", $un);
+        $query->bindValue(":pw", $pw);
+
+        $query->execute();
+
+        if($query->rowCount() == 1) {
+            return true;
+        }
+
+        array_push($this->errorArray, Constants::$loginFailed);
+        return false;
+    }
+
+    private function insertUserDetails($fn, $ln, $un, $em, $pw) {
+        
+        $pw = hash("sha512", $pw);
+        
+        $query = $this->con->prepare("INSERT INTO users (firstName, lastName, username, email, password)
+                                        VALUES (:fn, :ln, :un, :em, :pw)");
+        $query->bindValue(":fn", $fn);
+        $query->bindValue(":ln", $ln);
+        $query->bindValue(":un", $un);
+        $query->bindValue(":em", $em);
+        $query->bindValue(":pw", $pw);
+
+        return $query->execute();
+    }
+
+    private function validateFirstName($fn) {
+        if(strlen($fn) < 2 || strlen($fn) > 25) {
+            array_push($this->errorArray, Constants::$firstNameCharacters);
+        }
+    }
+
+    private function validateLastName($ln) {
+        if(strlen($ln) < 2 || strlen($ln) > 25) {
+            array_push($this->errorArray, Constants::$lastNameCharacters);
+        }
+    }
+
+    private function validateUsername($un) {
+        if(strlen($un) < 2 || strlen($un) > 25) {
+            array_push($this->errorArray, Constants::$usernameCharacters);
+            return;
+        }
+
+        $query = $this->con->prepare("SELECT * FROM users WHERE username=:un");
+        $query->bindValue(":un", $un);
+
+        $query->execute();
+        
+        if($query->rowCount() != 0) {
+            array_push($this->errorArray, Constants::$usernameTaken);
+        }
+    }
+
+    private function validateEmails($em, $em2) {
+        if($em != $em2) {
+            array_push($this->errorArray, Constants::$emailsDontMatch);
+            return;
+        }
+
+        if(!filter_var($em, FILTER_VALIDATE_EMAIL)) {
+            array_push($this->errorArray, Constants::$emailInvalid);
+            return;
+        }
+
+        $query = $this->con->prepare("SELECT * FROM users WHERE email=:em");
+        $query->bindValue(":em", $em);
+
+        $query->execute();
+        
+        if($query->rowCount() != 0) {
+            array_push($this->errorArray, Constants::$emailTaken);
+        }
+    }
+
+    private function validatePasswords($pw, $pw2) {
+        if($pw != $pw2) {
+            array_push($this->errorArray, Constants::$passwordsDontMatch);
+            return;
+        }
+
+        if(strlen($pw) < 5 || strlen($pw) > 25) {
+            array_push($this->errorArray, Constants::$passwordLength);
+        }
+    }
+
+    public function getError($error) {
+        if(in_array($error, $this->errorArray)) {
+            return "<span class='errorMessage'>$error</span>";
+        }
+    }
+
+}
+?>
+CategoryContainer:
+<?php
+class CategoryContainers {
+
+    private $con, $username;
+
+    public function __construct($con, $username) {
+        $this->con = $con;
+        $this->username = $username;
+    }
+
+    public function showAllCategories() {
+        $query = $this->con->prepare("SELECT * FROM categories");
+        $query->execute();
+
+        $html = "<div class='previewCategories'>";
+
+        while($row = $query->fetch(PDO::FETCH_ASSOC)) {
+            $html .= $this->getCategoryHtml($row, null, true, true);
+        }
+
+        return $html . "</div>";
+    }
+
+    private function getCategoryHtml($sqlData, $title, $tvShows, $movies) {
+        $categoryId = $sqlData["id"];
+        $title = $title == null ? $sqlData["name"] : $title;
+
+        if($tvShows && $movies) {
+            $entities = EntityProvider::getEntities($this->con, $categoryId, 30);
+        }
+        else if($tvShows) {
+            // Get tv show entities
+        }
+        else {
+            // Get movie entities
+        }
+
+        if(sizeof($entities) == 0) {
+            return;
+        }
+
+        $entitiesHtml = "";
+        $previewProvider = new PreviewProvider($this->con, $this->username);
+        foreach($entities as $entity) {
+            $entitiesHtml .= $previewProvider->createEntityPreviewSquare($entity);
+        }
+
+        return "<div class='category'>
+                    <a href='category.php?id=$categoryId'>
+                        <h3>$title</h3>
+                    </a>
+
+                    <div class='entities'>
+                        $entitiesHtml
+                    </div>
+                </div>";
+    }
+
+}
+?>
+Constants:
+<?php
+class Constants {
+    public static $firstNameCharacters = "Your first name must be between 2 and 25 characters";
+    public static $lastNameCharacters = "Your last name must be between 2 and 25 characters";
+    public static $usernameCharacters = "Your username must be between 2 and 25 characters";
+    public static $usernameTaken = "Username already in use";
+    public static $emailsDontMatch = "Your emails don't match";
+    public static $emailInvalid = "Invalid email";
+    public static $emailTaken = "Email already in use";
+    public static $passwordsDontMatch = "Passwords don't match";
+    public static $passwordLength = "Your password must be between 5 and 25 characters";
+    public static $loginFailed = "Your username or password was incorrect";
+}
+?>
+Preview:
+<?php
+class PreviewProvider {
+
+    private $con, $username;
+
+    public function __construct($con, $username) {
+        $this->con = $con;
+        $this->username = $username;
+    }
+
+    public function createPreviewVideo($entity) {
+        
+        if($entity == null) {
+            $entity = $this->getRandomEntity();
+        }
+
+        $id = $entity->getId();
+        $name = $entity->getName();
+        $preview = $entity->getPreview();
+        $thumbnail = $entity->getThumbnail();
+
+        // TODO: ADD SUBTITLE
+
+        return "<div class='previewContainer'>
+
+                    <img src='$thumbnail' class='previewImage' hidden>
+
+                    <video autoplay muted class='previewVideo' onended='previewEnded()'>
+                        <source src='$preview' type='video/mp4'>
+                    </video>
+
+                    <div class='previewOverlay'>
+                        
+                        <div class='mainDetails'>
+                            <h3>$name</h3>
+
+                            <div class='buttons'>
+                                <button><i class='fas fa-play'></i> Play</button>
+                                <button onclick='volumeToggle(this)'><i class='fas fa-volume-mute'></i></button>
+                            </div>
+
+                        </div>
+
+                    </div>
+        
+                </div>";
+
+    }
+
+    public function createEntityPreviewSquare($entity) {
+        $id = $entity->getId();
+        $thumbnail = $entity->getThumbnail();
+        $name = $entity->getName();
+
+        return "<a href='entity.php?id=$id'>
+                    <div class='previewContainer small'>
+                        <img src='$thumbnail' title='$name'>
+                    </div>
+                </a>";
+    }
+
+    private function getRandomEntity() {
+
+        $entity = EntityProvider::getEntities($this->con, null, 1);
+        return $entity[0];
+    }
+
+}
+?>
+Configuration:
+<?php
+ob_start(); // Turns on output buffering
+session_start();
+
+date_default_timezone_set("Europe/London");
+
+try {
+    $con = new PDO("mysql:dbname=adsrfilms;host=localhost", "root", "");
+    $con->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_WARNING);
+}
+catch (PDOException $e) {
+    exit("Connection failed: " . $e->getMessage());
+}
+?>
+Header:
+<?php
+require_once("includes/config.php");
+require_once("includes/classes/PreviewProvider.php");
+require_once("includes/classes/CategoryContainers.php");
+require_once("includes/classes/Entity.php");
+require_once("includes/classes/EntityProvider.php");
+
+if(!isset($_SESSION["userLoggedIn"])) {
+    header("Location: register.php");
+}
+
+$userLoggedIn = $_SESSION["userLoggedIn"];
+?>
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Welcome to adsrfilms</title>
+        <link rel="stylesheet" type="text/css" href="assets/style/style.css" />
+
+        <script src="https://code.jquery.com/jquery-3.4.1.min.js" integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo=" crossorigin="anonymous"></script>
+        <script src="https://kit.fontawesome.com/06a651c8da.js" crossorigin="anonymous"></script>
+        <script src="assets/js/script.js"></script>
+    </head>
+    <body>
+        <div class='wrapper'>
+
